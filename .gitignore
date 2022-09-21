@@ -1,1 +1,5 @@
 /praw.ini
+/labels.pickle
+/scores.pickle
+/text.pickle
+/users.pickle
