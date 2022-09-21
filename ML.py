@@ -1,7 +1,5 @@
 from os.path import exists
 import os
-from typing import List, Any
-
 import praw
 import pickle
 import tensorflow as tf
@@ -9,38 +7,10 @@ from keras.layers import TextVectorization
 from tensorflow import keras
 import keras.layers as layers
 import keras.losses as losses
-import tensorflow_hub as hub
 import numpy as np
 import time
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-
-sample_tensor = [[1, [2, 3]],
-                 [4, [5, 6]],
-                 [7, [8, 9]]]
-
-mid_tensor = [[1, 2],
-              [3, 4],
-              [5, 6]]
-
-real_tensor = tf.convert_to_tensor([[1, 2, 3, 4, 5],
-                                            [6, 7, 8, 9, 0],
-                                            [1, 2, 3, 4, 5]])
-
-to_add = [1, 2, 3]
-
-np_tensor = real_tensor.numpy()
-
-np_tensor = np.insert(np_tensor, 0, to_add, axis=1)
-
-print(np_tensor)
-
-
-final_tensor = [.1, .2, .3]
-
-sample_model = ["Preprocess",
-                "Dense",
-                "Output"]
 
 
 def cache_dict(files):
@@ -109,8 +79,6 @@ def user_loop(session):
                 score_tensors.extend(new_score_tensors)
                 users.update(new_users)
                 labels.extend(new_labels)
-
-                new_tensors = []
                 new_users = set()
                 new_score_tensors = []
                 new_text_tensors = []
@@ -151,15 +119,11 @@ def preprocessing(tensors):
             nested_text[i][j] = [text_tensors[i][j]]
 
     score_tensors = np.asarray(score_tensors)
-    #full_tensor = tf.convert_to_tensor(np.asarray(nested_text))
-    #print(full_tensor)
+    # full_tensor = tf.convert_to_tensor(np.asarray(nested_text))
+    # print(full_tensor)
     print(time.time_ns() - time_a)
 
-    vec_split = np.vectorize(str.split)
-
-    splitter = lambda t: t.split()
-
-    flat_array: list[list[Any]] = []
+    flat_array = []
 
     for sublist_1 in nested_text:
         flat_sublist = []
@@ -167,10 +131,8 @@ def preprocessing(tensors):
             flat_sublist.append(sublist_2[0])
         flat_array.append(' '.join(flat_sublist))
 
-    print(type(flat_array))
     sigendian = -vocab_size + vocab_size
 
-    text_tensors = tf.convert_to_tensor(flat_array)
     text_tensors = np.asarray(tf.cast(vectorize_layer(flat_array), tf.float64))[19:, 1:]
     text_tensors = text_tensors / text_tensors.sum(axis=1)[:, None] * 100
     score_tensors = np.asarray(score_tensors)
@@ -213,8 +175,10 @@ def preprocessing(tensors):
     for label in labels:
         nested_labels.append([label])
 
-    class_model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.000005), loss=losses.SparseCategoricalCrossentropy(from_logits=False), metrics='accuracy')
-    reg_model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.0001), loss=losses.MeanSquaredError(), metrics='accuracy')
+    class_model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.000005),
+                        loss=losses.SparseCategoricalCrossentropy(from_logits=False), metrics='accuracy')
+    reg_model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.0001),
+                      loss=losses.MeanSquaredError(), metrics='accuracy')
     class_model.fit(x=text_tensors, y=labels[19:], epochs=40, batch_size=batch, validation_split=.05)
     reg_model.fit(x=text_tensors, y=labels[19:], epochs=40, batch_size=batch, validation_split=.05)
     print(np.append(class_model.predict(text_tensors[:19, sigendian:]), nested_labels[:19], axis=1))
@@ -223,7 +187,8 @@ def preprocessing(tensors):
     '''class_pred = class_model.predict(text_tensors[19:, sigendian:])
     reg_pred = reg_model.predict(text_tensors[19:, sigendian:])
     combined_pred = np.append(class_pred, reg_pred, axis=1)
-    combined_val = np.append(class_model.predict(text_tensors[:19, sigendian:]), reg_model.predict(text_tensors[:19, sigendian:]), axis=1)
+    combined_val = np.append(class_model.predict(text_tensors[:19, sigendian:]),
+                             reg_model.predict(text_tensors[:19, sigendian:]), axis=1)
     final_model = keras.Sequential([
         layers.Dense(50),
         layers.Dense(1)
@@ -232,6 +197,7 @@ def preprocessing(tensors):
                         loss=losses.MeanSquaredError(), metrics='accuracy')
     final_model.fit(x=combined_pred, y=labels[19:], epochs=100, batch_size=batch, validation_split=.05)
     print(np.append(final_model.predict(combined_val[:, sigendian:]), nested_labels[:19], axis=1))'''
+
 
 if __name__ == '__main__':
     reddit = praw.Reddit("DEFAULT")
