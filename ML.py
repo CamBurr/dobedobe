@@ -118,7 +118,7 @@ def user_loop(session):
 
             cache_dict({'users': users, 'text': text_tensors, 'scores': score_tensors, 'labels': labels})
 
-        if len(users) >= 5000:
+        if len(users) >= 30000:
             return {'users': users, 'text': text_tensors, 'scores': score_tensors, 'labels': labels}
 
 
