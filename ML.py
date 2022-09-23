@@ -12,9 +12,12 @@ import time
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
+glob_file = "Data/glob.pickle"
+vocab_file = "Data/vocab.pickle"
+
 
 def dict_load():
-    with open('glob.pickle', 'rb') as fp:
+    with open(glob_file, 'rb') as fp:
         to_return = pickle.load(fp)
     return to_return
 
@@ -31,14 +34,14 @@ def preprocessing(tensors):
     for i in text_tensors:
         flat_text.extend(i)
 
-    if exists('vocab.pickle'):
-        with open('vocab.pickle', 'rb') as handle:
+    if exists(vocab_file):
+        with open(vocab_file, 'rb') as handle:
             vocab = pickle.load(handle)
             vectorize_layer.set_vocabulary(vocab[0:vocab_size])
     else:
         vectorize_layer.adapt(flat_text)
         print(vectorize_layer.get_vocabulary(include_special_tokens=True))
-        with open('vocab.pickle', 'wb') as handle:
+        with open(vocab_file, 'wb') as handle:
             pickle.dump(vectorize_layer.get_vocabulary(), handle)
 
     sigendian = -vocab_size + vocab_size

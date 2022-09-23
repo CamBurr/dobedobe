@@ -4,8 +4,8 @@ import pickle
 import time
 import string
 
-data_file = "data.pickle"
-glob_file = "glob.pickle"
+data_file = "Data/data.pickle"
+glob_file = "Data/glob.pickle"
 size = 250
 
 
