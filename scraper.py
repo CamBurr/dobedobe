@@ -43,7 +43,7 @@ def get_subreddit_data(a):
 
 
 def get_user_comments(author):
-    url = 'https://api.pushshift.io/reddit/comment/search/?size=50&author={}&filter=body,score'.format(author)
+    url = 'https://api.pushshift.io/reddit/comment/search/?size=100&author={}&filter=body,score'.format(author)
     r = requests.get(url)
     if r:
         comments = json.loads(r.text)['data']
@@ -63,11 +63,12 @@ def get_user_comments(author):
         time.sleep(4)
         return get_user_comments(author)
 
+
 before = oldestTS
 data = get_subreddit_data(before)
 cache_flag = 0
 
-while len(data) >= 0 and len(dataSet) < 30000:
+while len(data) >= 0 and len(dataSet) < 60000:
     new_users = 0
     for c in data:
         if c['author'] not in dataSet:
