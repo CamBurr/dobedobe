@@ -30,13 +30,85 @@ def dict_load():
 
 
 def unsparse_labels(sparse_labels):
-    split = 0.15
-    centrist = 0
+    """
+    main_weight = 0.7
+    other_weight = 0.3
+
+    odds = [1, 1, 2**(1/2), 2, 2, 3**(1/2), 3**(1/2), 8**(1/2)]
+    evens = [1, 1, 1, 2**(1/2), 2**(1/2), 2, 3**(1/2), 3**(1/2)]
+    center = [1, 2**(1/2)]
+    odds_weights = []
+    evens_weights = []
+    center_weights = []
+    unsparsed = []
+
+    for i in odds:
+        odds_weights.append((1-(odds.count(i)*i)/sum(odds))/odds.count(i)*other_weight)
+
+    for i in evens:
+        evens_weights.append((1-(evens.count(i)*i)/sum(evens))/evens.count(i)*other_weight)
+
+    for i in center:
+        center_weights.append((1-(4*i))/(4*center[0] + 4*center[1])/4*other_weight)
+    print(odds_weights)
+
+    for i in range(len(sparse_labels)):
+        base = [0.0] * 9
+        rearranged_list = [6, 2, 0, 4, 8, 1, 3, 5, 7]
+        label = rearranged_list[sparse_labels[i]]
+        last_even = 0
+        if label == 8:
+            for j in range(8):
+                base[j] = center_weights[j%2]
+            base[8] = .7
+        elif label % 2 == 1:
+            nums = [0, 1, 2, 3, 4, 5, 6, 7]
+            base[(label + 1) % 8] = odds_weights[-1]
+            base[label - 1] = odds_weights[-2]
+            print(label)
+            nums.remove((label + 1) % 8)
+            nums.remove(label - 1)
+            base[8] = odds_weights[-3]
+            base[(label + 2) % 4] = odds_weights[-4]
+            base[(label + 2) % 4 + 4] = odds_weights[-5]
+            nums.remove((label + 2) % 4)
+            nums.remove((label + 2) % 4 + 4)
+            for k in nums:
+                if k % 2 == 0:
+                    last_even = k
+            nums.remove(last_even)
+            base[last_even] = odds_weights[-6]
+            for k in nums:
+                base[k] = odds_weights[-7]
+        else:
+            nums = [0, 1, 2, 3, 4, 5, 6, 7]
+            base[8] = evens_weights[-1]
+            base[label+1] = evens_weights[-2]
+            base[(label - 1) % 8] = evens_weights[-3]
+            nums = [i for i in nums if i not in [label + 1, (label - 1) % 8]]
+            base[(label + 2) % 4] = evens_weights[-4]
+            base[(label + 2) % 4 + 4] = evens_weights[-5]
+            nums = [i for i in nums if i not in [(label + 2) % 4, (label + 2) % 4 + 4]]
+            last_odd = 0
+            for k in nums:
+                if k % 2 == 0:
+                    last_even = k
+                else:
+                    last_odd = k
+            base[last_even] = evens_weights[-6]
+            base[last_odd] = evens_weights[-7]
+        unsparsed.append(base)
+    """
+
+    split = 0.09
+    base_float = 0.02
     unsparsed = []
 
     for i in range(len(sparse_labels)):
         label = sparse_labels[i]
-        base = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+        base = [base_float] * 9
+
+        # An alternate label smoothing function.
         if label > 4:
             if label < 7:
                 base[1] = split
@@ -46,8 +118,7 @@ def unsparse_labels(sparse_labels):
                 base[3] = split
             else:
                 base[2] = split
-            base[4] = centrist
-            base[label] = 1 - (split * 2) - centrist
+            base[label] = 1 - (split * 2) - (base_float * 6)
         elif label != 4:
             if label == 0 or label == 2:
                 base[7] = split
@@ -57,11 +128,14 @@ def unsparse_labels(sparse_labels):
                 base[8] = split
             if label == 1 or label == 2:
                 base[6] = split
-            base[4] = centrist
-            base[label] = 1 - (split * 2) - centrist
+            base[label] = 1 - (split * 2) - (base_float * 6)
         else:
-            base[label] = 1
+            base[label] = 1 - base_float * 8
+
+        # base[label] = .76
         unsparsed.append(base)
+
+    print(unsparsed[:1])
     return unsparsed
 
 
@@ -70,7 +144,7 @@ def write_file(file, obj):
         pickle.dump(obj, fp)
 
 
-def create_seq(dropout=0.25, lr_sched=0.0001, dense_size=20, num_layers=1):
+def create_seq(dropout=0.0, lr_sched=0.0001, dense_size=20, num_layers=1):
 
     dense_layers = []
 
@@ -166,6 +240,7 @@ if __name__ == '__main__':
     init_time = time.time()
 
     # if you change anything before this point, the cached_tensor.pickle file must be deleted for changes to take effect
+    # this incurs a large delay to vectorize the tensors again (1-5min)
 
     prepped_dict = preprocess_tensors(vectorized_tensors, raw_dict['scores'], raw_dict['labels'])
 
@@ -189,7 +264,7 @@ if __name__ == '__main__':
         decay_rate=.75,
         staircase=False)
 
-    model = create_seq(lr_sched=lr_schedule)
+    model = create_seq(lr_sched=lr_schedule, dense_size=50, dropout=.35)
 
     scikit_model = KerasRegressor(model=create_seq, dense_size=9, num_layers=1, dropout=0)
 
@@ -197,11 +272,11 @@ if __name__ == '__main__':
 
     history = model.fit(x=train_tensors,
                         y=train_labels,
-                        epochs=10000,
+                        epochs=500,
                         steps_per_epoch=steps_per_epoch,
                         validation_data=(val_tensors, val_labels),
                         callbacks=tf.keras.callbacks.EarlyStopping(monitor='val_categorical_crossentropy',
-                                                                   patience=200))
+                                                                   patience=100))
 
     new_metrics = model.evaluate(val_tensors, val_labels)
     if old_model:
@@ -217,15 +292,17 @@ if __name__ == '__main__':
 
     model.summary()
 
-    param_grid = {"dense_size": [25], "num_layers": [1, 2], "dropout": [.25]}
+    """
+    param_grid = {"dense_size": [25, 50], "num_layers": [1], "dropout": [.25, .35]}
     print(train_labels[:10])
     grid = sklearn.model_selection.GridSearchCV(estimator=scikit_model, param_grid=param_grid,
-                                                n_jobs=-1, cv=2, verbose=2)
+                                                n_jobs=-1, cv=3, verbose=2)
     grid_result = grid.fit(train_tensors, train_labels, verbose=0,
-                           epochs=50,
+                           epochs=500,
                            steps_per_epoch=steps_per_epoch,
                            validation_data=(val_tensors, val_labels),
                            callbacks=tf.keras.callbacks.EarlyStopping(monitor='val_categorical_crossentropy',
                                                                       patience=200))
 
     print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
+    """
