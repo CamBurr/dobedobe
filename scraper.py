@@ -3,23 +3,33 @@ import json
 import pickle
 import time
 import string
+from datetime import datetime
+from os.path import exists
 
-data_file = "Data/data.pickle"
+flairs = ['left', 'right', 'lib', 'auth', 'centrist', 'authright', 'libright', 'libleft', 'authleft']
+user_set_file = "Data/data.pickle"
 glob_file = "Data/glob.pickle"
-size = 250
+processed_users_file = "Data/processed_users.pickle"
+size = 500
+num_users = 50000
 
 
-try:
-    with open(data_file, 'rb') as fp:
-        dataSet = pickle.load(fp)
-        oldestTS = min(a['created_utc'] for a in dataSet.values())
-except FileNotFoundError as error:
-    oldestTS = int(time.time())
-    dataSet = dict()
+def load_file(file):
+    if exists(file):
+        with open(file, 'rb') as fp:
+            var = pickle.load(fp)
+        return var
+    return None
+
+
+def write_file(var, file):
+    with open(file, 'wb') as fp:
+        pickle.dump(var, fp)
+    return
 
 
 def fmt(flair):
-    if flair is not None:
+    if flair is not None and len(flair) > 1:
         flair = flair.split(':')[1].lower()
         if flair[0] == 'c':
             return 'centrist'
@@ -30,87 +40,130 @@ def fmt(flair):
         return None
 
 
-def get_subreddit_data(a):
-    url = 'https://api.pushshift.io/reddit/comment/search/?size='+str(size)+'&before='+str(a) + \
-          '&subreddit=PoliticalCompassMemes&filter=id,author,author_flair_text,created_utc'
-    r = requests.get(url)
-    if r:
-        data = json.loads(r.text)
-        return data['data']
+def get_subreddit_data(before, prev_wait):
+    new_wait = prev_wait ** 1.5
+    if prev_wait <= 1:
+        new_wait = 1.1
+    try:
+        url = f'https://api.pushshift.io/reddit/comment/search/?size={size}&before={round(before)}' \
+              f'&subreddit=PoliticalCompassMemes&filter=id,author,author_flair_text,created_utc'
+        print("Requesting new comments...", end='')
+        response = requests.get(url, timeout=2)
+        if response:
+            data = json.loads(response.text)
+            return data['data']
+        else:
+            print(f" Got HTTP {response.status_code} error. Trying again.")
+            time.sleep(new_wait)
+            return get_subreddit_data(before, new_wait)
+    except requests.exceptions.ReadTimeout:
+        print(f" Timed out. Trying again.")
+        time.sleep(new_wait)
+        return get_subreddit_data(before, new_wait)
+
+
+def get_user_comments(author, prev_wait):
+    new_wait = prev_wait ** 1.5
+    if prev_wait <= 1:
+        new_wait = 1.1
+    print("Requesting new comment history...", end='')
+    try:
+        url = f'https://api.pushshift.io/reddit/comment/search/?size=150&author={author}&filter=body,score'
+        response = requests.get(url, timeout=4)
+        if response:
+            user_comments = json.loads(response.text)['data']
+            cleaned = []
+            for user_comment in user_comments:
+                if 'https://' not in user_comment['body'] and 'http://' not in user_comment['body']:
+                    new_body = ''.join(filter(lambda x: x in string.printable and x not in
+                                              ',./?";\'`:;!@#$%^&*()_+1234567890-=\\|}{[]',
+                                              user_comment['body'])).replace('\n', ' ')
+                    cleaned.append({'body': new_body,
+                                    'score': user_comment['score']})
+            user_flat = ' '.join([cmt['body'] for cmt in cleaned])
+            return cleaned, user_flat
+        else:
+            print(f" got HTTP {response.status_code} error. Trying again after {round(new_wait, 1)} seconds.")
+            time.sleep(new_wait)
+            return get_user_comments(author, new_wait)
+    except requests.exceptions.ReadTimeout:
+        print(f" Timed out. Trying again after {round(new_wait, 1)} seconds.")
+        time.sleep(new_wait)
+        return get_user_comments(author, new_wait)
+
+
+if __name__ == "__main__":
+    user_set = load_file(user_set_file)
+    glob = load_file(glob_file)
+    processed_users = load_file(processed_users_file)
+    oldest_time = time.time()
+    min_wait = .5
+
+    if user_set:
+        oldest_time = min([a['created_utc'] for a in user_set.values()])
     else:
-        time.sleep(3)
-        return get_subreddit_data(a)
+        user_set = dict()
+    if not glob:
+        glob = {'text': [], 'scores': [], 'labels': []}
+    if not processed_users:
+        processed_users = set()
 
-
-def get_user_comments(author):
-    url = 'https://api.pushshift.io/reddit/comment/search/?size=100&author={}&filter=body,score'.format(author)
-    r = requests.get(url)
-    if r:
-        comments = json.loads(r.text)['data']
-        cleaned = []
-        for comment in comments:
-            if 'https://' not in comment['body'] and 'http://' not in comment['body']:
-                new_body = ''.join(filter(lambda x: x in string.printable and x not in ',./?";\'`:;!@#$%^&*()_+1234567890-=\\|}{[]',
-                                          comment['body'])).replace('\n', ' ')
-                cleaned.append({'body': new_body,
-                                'score': comment['score']})
-
-        flat = ' '.join([c['body'] for c in cleaned])
-
-        return cleaned, flat
-    else:
-        print(r)
-        time.sleep(4)
-        return get_user_comments(author)
-
-
-before = oldestTS
-data = get_subreddit_data(before)
-cache_flag = 0
-
-while len(data) >= 0 and len(dataSet) < 60000:
+    raw_comments = []
+    if len(user_set) < num_users:
+        print("Beginning initial query for comments.")
+        raw_comments = get_subreddit_data(oldest_time, 0)
     new_users = 0
-    for c in data:
-        if c['author'] not in dataSet:
-            dataSet[c['author']] = {'created_utc': c['created_utc'],
-                                    'id': c['id'],
-                                    'author_flair_text': fmt(c['author_flair_text'])}
-            new_users += 1
+    queried_comments = 0
 
-    cache_flag += new_users
-    if cache_flag >= 1000:
-        with open(data_file, 'wb') as fp:
-            pickle.dump(dataSet, fp)
-        cache_flag = 0
-        print("Cached dataset.")
+    while len(raw_comments) > 0 and len(user_set) < num_users:
+        init_time = time.time()
+        print(f" Response received, adding users from {len(raw_comments)} comments from before "
+              f"{datetime.fromtimestamp(oldest_time)}, currently have {len(user_set)}...", end='')
+        for comment in raw_comments:
+            queried_comments += 1
+            if comment['author'] not in user_set:
+                user_set[comment['author']] = {'created_utc': comment['created_utc'],
+                                               'id': comment['id'],
+                                               'author_flair_text': fmt(comment['author_flair_text'])}
+                new_users += 1
+        print(" Done!")
+        if new_users > 100:
+            write_file(user_set, user_set_file)
+            queried_comments = 0
+            new_users = 0
+        oldest_time = raw_comments[-1]['created_utc']
+        cur_time = time.time() - init_time
+        wait_time = min_wait - cur_time
+        if cur_time < min_wait:
+            time.sleep(wait_time)
+        raw_comments = get_subreddit_data(oldest_time, 0)
 
-    print('Got {total} users, added {new_users} users for a total of {full} users.'.format(total=len(data), new_users=new_users, full=len(dataSet)))
-    data = get_subreddit_data(data[-1]['created_utc'])
+    print(f"Finished with {len(user_set)} total users. Proceeding to comment collection.")
 
-score_tensor = []
-text_tensor = []
-labels = []
-
-flairs = ['left', 'right', 'lib', 'auth', 'centrist', 'authright', 'libright', 'libleft', 'authleft']
-cache_flag = 0
-
-for user in dataSet:
-    user_flair = dataSet[user]['author_flair_text']
-    if user_flair in flairs:
-        comments, flat = get_user_comments(user)
-        if len(comments) > 0:
-            text_tensor.append(flat)
-            score_tensor.append(round(sum(c['score'] for c in comments)/len(comments), 1))
-            labels.append(flairs.index(user_flair))
-            print(flairs.index(user_flair))
-        cache_flag += 1
-        if cache_flag >= 50:
-            glob = {'text': text_tensor, 'scores': score_tensor, 'labels': labels}
-            with open(glob_file, 'wb') as fp:
-                pickle.dump(glob, fp)
-            cache_flag = 0
-            print(len(score_tensor), len(text_tensor))
-
-glob = {'text': text_tensor, 'scores': score_tensor, 'labels': labels}
-with open(glob_file, 'wb') as fp:
-    pickle.dump(glob, fp)
+    new_users = 0
+    queried_users = 0
+    init_time = time.time()
+    for user in user_set:
+        user_flair = user_set[user]['author_flair_text']
+        if user_flair in flairs and user not in processed_users:
+            cur_time = time.time() - init_time
+            wait_time = min_wait - cur_time
+            if cur_time < min_wait:
+                time.sleep(wait_time)
+            comments, flat = get_user_comments(user, 0)
+            init_time = time.time()
+            print(f" Response received, adding comment history, currently have {len(glob['text'])}...",
+                  end='')
+            if len(comments) > 0:
+                glob['text'].append(flat)
+                glob['scores'].append(round(sum(c['score'] for c in comments) / len(comments), 1))
+                glob['labels'].append(flairs.index(user_flair))
+                processed_users.add(user)
+                new_users += 1
+            queried_users += 1
+            print(f" Done!")
+        if new_users > 100:
+            write_file(glob, glob_file)
+            new_users = 0
+            queried_users = 0
+    print(f"Finished with {len(glob['text'])} comment histories.")
