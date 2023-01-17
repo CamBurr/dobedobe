@@ -8,17 +8,15 @@ import keras.layers as layers
 import keras.losses as losses
 import numpy as np
 import time
-from scikeras.wrappers import KerasRegressor
 import random
-import sklearn.model_selection
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 cached_dict_file = "Data/cached_dict.pickle"
 cached_balanced_file = "Data/cached_balanced_dict.pickle"
 glob_file = "Data/glob_3.pickle"
 vocab_file = "Data/vocab.pickle"
-use_scikit = False
-use_balance = False
+use_balance = True
+output_format = "fouraxis"
 random.seed()
 
 
@@ -28,86 +26,14 @@ def dict_load():
     return to_return
 
 
-def unsparse_labels(sparse_labels):
-    """
-    main_weight = 0.7
-    other_weight = 0.3
-
-    odds = [1, 1, 2**(1/2), 2, 2, 3**(1/2), 3**(1/2), 8**(1/2)]
-    evens = [1, 1, 1, 2**(1/2), 2**(1/2), 2, 3**(1/2), 3**(1/2)]
-    center = [1, 2**(1/2)]
-    odds_weights = []
-    evens_weights = []
-    center_weights = []
-    unsparsed = []
-
-    for i in odds:
-        odds_weights.append((1-(odds.count(i)*i)/sum(odds))/odds.count(i)*other_weight)
-
-    for i in evens:
-        evens_weights.append((1-(evens.count(i)*i)/sum(evens))/evens.count(i)*other_weight)
-
-    for i in center:
-        center_weights.append((1-(4*i))/(4*center[0] + 4*center[1])/4*other_weight)
-    print(odds_weights)
-
-    for i in range(len(sparse_labels)):
-        base = [0.0] * 9
-        rearranged_list = [6, 2, 0, 4, 8, 1, 3, 5, 7]
-        label = rearranged_list[sparse_labels[i]]
-        last_even = 0
-        if label == 8:
-            for j in range(8):
-                base[j] = center_weights[j%2]
-            base[8] = .7
-        elif label % 2 == 1:
-            nums = [0, 1, 2, 3, 4, 5, 6, 7]
-            base[(label + 1) % 8] = odds_weights[-1]
-            base[label - 1] = odds_weights[-2]
-            print(label)
-            nums.remove((label + 1) % 8)
-            nums.remove(label - 1)
-            base[8] = odds_weights[-3]
-            base[(label + 2) % 4] = odds_weights[-4]
-            base[(label + 2) % 4 + 4] = odds_weights[-5]
-            nums.remove((label + 2) % 4)
-            nums.remove((label + 2) % 4 + 4)
-            for k in nums:
-                if k % 2 == 0:
-                    last_even = k
-            nums.remove(last_even)
-            base[last_even] = odds_weights[-6]
-            for k in nums:
-                base[k] = odds_weights[-7]
-        else:
-            nums = [0, 1, 2, 3, 4, 5, 6, 7]
-            base[8] = evens_weights[-1]
-            base[label+1] = evens_weights[-2]
-            base[(label - 1) % 8] = evens_weights[-3]
-            nums = [i for i in nums if i not in [label + 1, (label - 1) % 8]]
-            base[(label + 2) % 4] = evens_weights[-4]
-            base[(label + 2) % 4 + 4] = evens_weights[-5]
-            nums = [i for i in nums if i not in [(label + 2) % 4, (label + 2) % 4 + 4]]
-            last_odd = 0
-            for k in nums:
-                if k % 2 == 0:
-                    last_even = k
-                else:
-                    last_odd = k
-            base[last_even] = evens_weights[-6]
-            base[last_odd] = evens_weights[-7]
-        unsparsed.append(base)
-    """
-
-    split = 0.09
-    base_float = 0.02
+def unsparse_raw(sparse_labels):
+    split = 0
+    base_float = 0
     unsparsed = []
 
     for i in range(len(sparse_labels)):
         label = sparse_labels[i]
         base = [base_float] * 9
-
-        # An alternate label smoothing function.
         if label > 4:
             if label < 7:
                 base[1] = split
@@ -130,10 +56,24 @@ def unsparse_labels(sparse_labels):
             base[label] = 1 - (split * 2) - (base_float * 6)
         else:
             base[label] = 1 - base_float * 8
-
-        # base[label] = .76
         unsparsed.append(base)
     return unsparsed
+
+
+def unsparse_four_axis(sparse_labels):
+    unsparsed_labels = []
+    for i, label in enumerate(sparse_labels):
+        new_label = []
+        if label < 2:
+            new_label.append(1)
+        else:
+            new_label.append(0)
+        if label % 2 == 0:
+            new_label.append(1)
+        else:
+            new_label.append(0)
+        unsparsed_labels.append(new_label)
+    return unsparsed_labels
 
 
 def write_file(file, obj):
@@ -141,7 +81,7 @@ def write_file(file, obj):
         pickle.dump(obj, write_fp)
 
 
-def create_seq(dropout=0.0, lr_sched=0.0001, dense_size=20, num_layers=1, loss_met="binary"):
+def create_seq(dropout=0.0, lr_sched=0.0001, dense_size=20, num_layers=1, output_size=1):
     dense_layers = []
 
     for i in range(num_layers):
@@ -156,19 +96,17 @@ def create_seq(dropout=0.0, lr_sched=0.0001, dense_size=20, num_layers=1, loss_m
         model_to_return.add(layer)
 
     accuracy = 'binary_accuracy'
-    loss = losses.BinaryCrossentropy()
+    model_loss = losses.BinaryCrossentropy()
     metric = keras.metrics.BinaryCrossentropy()
-    final_dense_size = 1
-    if loss_met == "categorical":
+    if output_size > 1:
         accuracy = 'categorical_accuracy'
-        loss = losses.CategoricalCrossentropy
+        model_loss = losses.CategoricalCrossentropy()
         metric = keras.metrics.CategoricalCrossentropy()
-        final_dense_size = 9
 
-    model_to_return.add(layers.Dense(final_dense_size, activation='sigmoid'))
+    model_to_return.add(layers.Dense(output_size, activation='sigmoid'))
     optimizer = keras.optimizers.Adam(learning_rate=lr_sched)
     model_to_return.compile(optimizer=optimizer,
-                            loss=loss,
+                            loss=model_loss,
                             metrics=[accuracy, metric])
 
     return model_to_return
@@ -176,8 +114,10 @@ def create_seq(dropout=0.0, lr_sched=0.0001, dense_size=20, num_layers=1, loss_m
 
 def preprocess_tensors(vect_tensors, score_tensors, labels):
     labels = np.asarray(labels)
-    if not isinstance(labels[0], np.int32):
-        unsparsed = np.asarray(unsparse_labels(labels))
+    if max(labels) == 3:
+        unsparsed = np.asarray(unsparse_four_axis(labels))
+    elif max(labels) > 3:
+        unsparsed = np.asarray(unsparse_raw(labels))
     else:
         unsparsed = None
 
@@ -232,8 +172,6 @@ def create_validation_data(split, tensor_dict):
     train_l = np.asarray(train_l)
     val_t = np.asarray(val_t)
     val_l = np.asfarray(val_l)
-    counts = [len(train_t), len(val_t)]
-    print(counts)
     # train_tensors, val_tensors, train_labels, val_labels
     return train_t, val_t, train_l, val_l
 
@@ -242,7 +180,7 @@ def delta_time(t):
     return round(time.time() - t, 2)
 
 
-def raw_to_binary(data_dict):
+def raw_to_left_right(data_dict):
     text = data_dict['text']
     labels = data_dict['labels']
     scores = data_dict['scores']
@@ -262,19 +200,32 @@ def raw_to_binary(data_dict):
     return {'text': new_text, 'labels': new_labels, 'scores': new_scores}
 
 
+def raw_to_four_axis(data_dict):
+    text = data_dict['text']
+    labels = data_dict['labels']
+    scores = data_dict['scores']
+    new_text = []
+    new_labels = []
+    new_scores = []
+    for index, label in enumerate(labels):
+        if label in [5, 6, 7, 8]:
+            new_labels.append(label - 5)
+            new_text.append(text[index])
+            new_scores.append(scores[index])
+    return {'text': new_text, 'labels': new_labels, 'scores': new_scores}
+
+
 def balance_dict(data_dict):
     labels = data_dict['labels']
     text = data_dict['text']
     scores = data_dict['scores']
-    if not str(labels[0]).isnumeric():
-        counts = [0] * len(labels[0])
-    else:
-        counts = [0, 0]
+    counts = [0] * (max(labels) + 1)
     new_labels = []
     new_text = []
     new_scores = []
     for label in labels:
         counts[label] += 1
+    print(counts)
     min_c = min(counts)
     for i in range(len(counts)):
         counts[i] = 0
@@ -293,12 +244,27 @@ if __name__ == '__main__':
     raw_dict = dict_load()
     print("Loaded data in {} seconds.".format(delta_time(init_time)))
     init_time = time.time()
-    binary_dict = raw_to_binary(raw_dict)
-    print("Converted to binary dataset in {} seconds.".format(delta_time(init_time)))
+    left_right_dict = raw_to_left_right(raw_dict)
+    four_axis_dict = raw_to_four_axis(raw_dict)
 
-    active_dict = binary_dict
+    loss = "categorical"
+    monitor = "val_categorical_crossentropy"
+
+    if output_format == "leftright":
+        loss = "binary"
+        monitor = "val_binary_crossentropy"
+        active_dict = left_right_dict
+        final_layer_size = 1
+    elif output_format == "fouraxis":
+        active_dict = four_axis_dict
+        final_layer_size = 2
+    else:
+        active_dict = raw_dict
+        final_layer_size = 9
+
     if use_balance:
         active_dict = balance_dict(active_dict)
+
     vocab_size = 5000
     vectorize_layer = create_vectorize_layer(active_dict['text'], 20000, vocab_size)
 
@@ -315,6 +281,7 @@ if __name__ == '__main__':
         print("Vectorized and prepped tensors in {} seconds.".format(delta_time(init_time)))
     # if you change anything before this point, the cached_tensor.pickle file must be deleted for changes to take effect
     # this incurs a large delay to vectorize the tensors again (1-5min)
+    print(type(prepped_dict))
 
     init_time = time.time()
     train_tensors, val_tensors, train_labels, val_labels = create_validation_data(0.2, prepped_dict)
@@ -327,7 +294,8 @@ if __name__ == '__main__':
     print("{} validation points.".format(len(val_labels)))
 
     old_model = None
-    if exists("current_model"):
+    compare_models = False
+    if exists("current_model") and compare_models:
         print("Loading saved model.")
         old_model = keras.models.load_model('current_model')
 
@@ -339,20 +307,16 @@ if __name__ == '__main__':
         decay_rate=.75,
         staircase=False)
 
-    model = create_seq(lr_sched=lr_schedule, dense_size=100, dropout=.35)
-
-    if use_scikit:
-        scikit_model = KerasRegressor(model=create_seq, dense_size=9, num_layers=1, dropout=0)
+    model = create_seq(lr_sched=lr_schedule, dense_size=1000, dropout=.35, output_size=final_layer_size)
 
     print("Model created in {} seconds".format(delta_time(init_time)))
-    print(train_labels[0])
 
     history = model.fit(x=train_tensors,
                         y=train_labels,
                         epochs=500,
                         steps_per_epoch=steps_per_epoch,
                         validation_data=(val_tensors, val_labels),
-                        callbacks=tf.keras.callbacks.EarlyStopping(monitor='val_binary_crossentropy',
+                        callbacks=tf.keras.callbacks.EarlyStopping(monitor=monitor,
                                                                    patience=100))
 
     new_metrics = model.evaluate(val_tensors, val_labels)
@@ -366,18 +330,4 @@ if __name__ == '__main__':
         model.save('current_model')
 
     model.summary()
-
-    """
-    param_grid = {"dense_size": [25, 50], "num_layers": [1], "dropout": [.25, .35]}
-    print(train_labels[:10])
-    grid = sklearn.model_selection.GridSearchCV(estimator=scikit_model, param_grid=param_grid,
-                                                n_jobs=-1, cv=3, verbose=2)
-    grid_result = grid.fit(train_tensors, train_labels, verbose=0,
-                           epochs=500,
-                           steps_per_epoch=steps_per_epoch,
-                           validation_data=(val_tensors, val_labels),
-                           callbacks=tf.keras.callbacks.EarlyStopping(monitor='val_categorical_crossentropy',
-                                                                      patience=200))
-
-    print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
-    """
+    exit()
