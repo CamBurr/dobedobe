@@ -40,7 +40,7 @@ tensorflow-io-gcs-filesystem==0.26.0
 termcolor==1.1.0
 typing_extensions==4.3.0
 update-checker==0.18.0
-urllib3==1.26.12
+urllib3==1.26.18
 websocket-client==1.4.0
 Werkzeug==2.2.3
 wrapt==1.14.1
